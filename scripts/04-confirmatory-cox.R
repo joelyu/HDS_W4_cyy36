@@ -35,7 +35,6 @@
 
 library(survival)
 library(dplyr)
-library(cBioPortalData)
 
 if (!exists("proc_dir")) proc_dir <- file.path("data", "processed")
 
@@ -46,58 +45,10 @@ if (!exists("surv_metabric")) {
 }
 
 # =============================================================================
-# 1. Fetch extended clinical confounders
+# 1. Load extended clinical confounders (fetched by 00-fetch-data.R)
 # =============================================================================
-extended_clin_file <- file.path(proc_dir, "metabric_clinical_extended.csv")
-extended_tcga_file <- file.path(proc_dir, "tcga_clinical_extended.csv")
-
-if (!file.exists(extended_clin_file)) {
-  message("=== Fetching extended METABRIC clinical data ===")
-  cbio  <- cBioPortal()
-  m_raw <- clinicalData(cbio, studyId = "brca_metabric")
-  m_ext <- m_raw %>%
-    transmute(
-      patient_id     = patientId,
-      tumor_stage    = as.integer(suppressWarnings(as.numeric(TUMOR_STAGE))),
-      grade          = as.integer(suppressWarnings(as.numeric(GRADE))),
-      tumor_size     = as.numeric(TUMOR_SIZE),
-      lymph_nodes_pos = as.integer(suppressWarnings(as.numeric(LYMPH_NODES_EXAMINED_POSITIVE))),
-      npi            = as.numeric(NPI),
-      chemotherapy   = if ("CHEMOTHERAPY"    %in% names(.)) CHEMOTHERAPY    else NA_character_,
-      hormone_therapy = if ("HORMONE_THERAPY" %in% names(.)) HORMONE_THERAPY else NA_character_
-    )
-  write.csv(m_ext, extended_clin_file, row.names = FALSE)
-  message(sprintf("Saved: %s (%d rows)", extended_clin_file, nrow(m_ext)))
-} else {
-  message("=== Using cached METABRIC extended clinical ===")
-  m_ext <- read.csv(extended_clin_file)
-}
-
-if (!file.exists(extended_tcga_file)) {
-  message("=== Fetching extended TCGA clinical data ===")
-  if (!exists("cbio")) cbio <- cBioPortal()
-  t_raw <- clinicalData(cbio, studyId = "brca_tcga_pan_can_atlas_2018")
-  # Note: grade not available in TCGA via cBioPortal — g3 is the primary model
-  t_ext <- t_raw %>%
-    transmute(
-      patient_id      = patientId,
-      ajcc_stage      = AJCC_PATHOLOGIC_TUMOR_STAGE,
-      tumor_stage_num = case_when(
-        grepl("STAGE I[^V]|STAGE IA|STAGE IB", AJCC_PATHOLOGIC_TUMOR_STAGE) ~ 1L,
-        grepl("STAGE II",  AJCC_PATHOLOGIC_TUMOR_STAGE)                      ~ 2L,
-        grepl("STAGE III", AJCC_PATHOLOGIC_TUMOR_STAGE)                      ~ 3L,
-        grepl("STAGE IV",  AJCC_PATHOLOGIC_TUMOR_STAGE)                      ~ 4L,
-        TRUE ~ NA_integer_
-      ),
-      path_t_stage = PATH_T_STAGE,
-      radiation    = if ("RADIATION_THERAPY" %in% names(.)) RADIATION_THERAPY else NA_character_
-    )
-  write.csv(t_ext, extended_tcga_file, row.names = FALSE)
-  message(sprintf("Saved: %s (%d rows)", extended_tcga_file, nrow(t_ext)))
-} else {
-  message("=== Using cached TCGA extended clinical ===")
-  t_ext <- read.csv(extended_tcga_file)
-}
+m_ext <- read.csv(file.path(proc_dir, "metabric_clinical_extended.csv"))
+t_ext <- read.csv(file.path(proc_dir, "tcga_clinical_extended.csv"))
 
 # =============================================================================
 # 2. Merge extended clinical

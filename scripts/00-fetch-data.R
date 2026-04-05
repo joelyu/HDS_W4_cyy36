@@ -1,14 +1,19 @@
 # =============================================================================
 # 00-fetch-data.R
-# Fetch METABRIC + TCGA-BRCA (cBioPortal) + I-SPY2 (GEO) → data/processed/ and data/raw/
+# Fetch METABRIC + TCGA-BRCA (cBioPortal) + I-SPY2 (GEO) → data/processed/
 #
-# Two cohorts:
+# Three cohorts:
 #   1. METABRIC (brca_metabric) — Illumina HT-12 v3, log2 intensity
 #   2. TCGA-BRCA (brca_tcga_pan_can_atlas_2018) — RNA-Seq V2, RSEM
+#   3. I-SPY2 (GSE194040) — Agilent microarray, log2 intensity
 #
 # Output per cohort:
 #   data/processed/{cohort}_clinical.csv
 #   data/processed/{cohort}_expression.csv   (gene × patient, log2 scale)
+#
+# After processing, all three expression files are harmonized to the
+# intersection of Danaher genes present on all platforms (57/60 genes).
+# Excluded: TPSB2, XCL2, KIR2DL3 (platform-specific gaps).
 #
 # Expects: proc_dir defined by parent qmd (falls back to data/processed/)
 # =============================================================================
@@ -56,8 +61,9 @@ fetch_cohort <- function(
 
   clin_file <- file.path(proc_dir, paste0(label, "_clinical.csv"))
   expr_file <- file.path(proc_dir, paste0(label, "_expression.csv"))
+  ext_file  <- file.path(proc_dir, paste0(label, "_clinical_extended.csv"))
 
-  if (all(file.exists(c(clin_file, expr_file)))) {
+  if (all(file.exists(c(clin_file, expr_file, ext_file)))) {
     log <- c(
       log,
       sprintf("[%s] Using cached files (delete to re-fetch)", label)
@@ -142,6 +148,42 @@ fetch_cohort <- function(
     log,
     sprintf("  %s_clinical.csv: %d patients", label, nrow(clinical_clean))
   )
+
+  # ---- Extended clinical (study-specific confounders) ------------------------
+  if (label == "metabric") {
+    ext_clean <- clin_raw %>%
+      transmute(
+        patient_id      = patientId,
+        tumor_stage     = as.integer(suppressWarnings(as.numeric(TUMOR_STAGE))),
+        grade           = as.integer(suppressWarnings(as.numeric(GRADE))),
+        tumor_size      = as.numeric(TUMOR_SIZE),
+        lymph_nodes_pos = as.integer(suppressWarnings(as.numeric(LYMPH_NODES_EXAMINED_POSITIVE))),
+        npi             = as.numeric(NPI),
+        chemotherapy    = if ("CHEMOTHERAPY"    %in% names(.)) CHEMOTHERAPY    else NA_character_,
+        hormone_therapy = if ("HORMONE_THERAPY" %in% names(.)) HORMONE_THERAPY else NA_character_
+      )
+  } else if (label == "tcga") {
+    ext_clean <- clin_raw %>%
+      transmute(
+        patient_id      = patientId,
+        ajcc_stage      = AJCC_PATHOLOGIC_TUMOR_STAGE,
+        tumor_stage_num = case_when(
+          grepl("STAGE I[^V]|STAGE IA|STAGE IB", AJCC_PATHOLOGIC_TUMOR_STAGE) ~ 1L,
+          grepl("STAGE II",  AJCC_PATHOLOGIC_TUMOR_STAGE)                      ~ 2L,
+          grepl("STAGE III", AJCC_PATHOLOGIC_TUMOR_STAGE)                      ~ 3L,
+          grepl("STAGE IV",  AJCC_PATHOLOGIC_TUMOR_STAGE)                      ~ 4L,
+          TRUE ~ NA_integer_
+        ),
+        path_t_stage = PATH_T_STAGE,
+        radiation    = if ("RADIATION_THERAPY" %in% names(.)) RADIATION_THERAPY else NA_character_
+      )
+  } else {
+    ext_clean <- NULL
+  }
+  if (!is.null(ext_clean)) {
+    write.csv(ext_clean, ext_file, row.names = FALSE)
+    log <- c(log, sprintf("  %s_clinical_extended.csv: %d rows", label, nrow(ext_clean)))
+  }
 
   # ---- Expression data (Danaher marker genes only) ---------------------------
   expr_raw <- getDataByGenes(
@@ -322,6 +364,78 @@ if (!file.exists(ispy_file)) {
   )
 }
 
+# ---- Process I-SPY2 expression (Danaher genes only) -------------------------
+ispy_expr_file <- file.path(proc_dir, "ispy2_expression.csv")
+
+if (!file.exists(ispy_expr_file)) {
+  .log <- c(.log, "[ispy2] Processing expression data...")
+
+  ispy_raw <- read.delim(gzfile(ispy_file), header = TRUE, row.names = 1,
+                         check.names = FALSE)
+  .log <- c(.log, sprintf("  Raw: %d genes x %d samples",
+                           nrow(ispy_raw), ncol(ispy_raw)))
+
+  # Rename KIAA0125 → FAM30A (Agilent uses old symbol)
+  if ("KIAA0125" %in% rownames(ispy_raw) && !"FAM30A" %in% rownames(ispy_raw)) {
+    rownames(ispy_raw)[rownames(ispy_raw) == "KIAA0125"] <- "FAM30A"
+    .log <- c(.log, "  Renamed KIAA0125 → FAM30A")
+  }
+
+  # Filter to Danaher genes
+  available <- danaher_genes[danaher_genes %in% rownames(ispy_raw)]
+  missing   <- setdiff(danaher_genes, available)
+  .log <- c(.log, sprintf("  Danaher genes: %d/%d found", length(available),
+                           length(danaher_genes)))
+  if (length(missing) > 0) {
+    .log <- c(.log, sprintf("  Missing genes: %s", paste(missing, collapse = ", ")))
+  }
+
+  # Extract and format like METABRIC/TCGA (hugoGeneSymbol as first column)
+  ispy_expr <- ispy_raw[available, , drop = FALSE]
+  ispy_expr <- ispy_expr %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("hugoGeneSymbol")
+
+  write.csv(ispy_expr, ispy_expr_file, row.names = FALSE)
+  .log <- c(.log, sprintf("  ispy2_expression.csv: %d genes x %d patients",
+                           nrow(ispy_expr), ncol(ispy_expr) - 1))
+} else {
+  .log <- c(.log, "[ispy2] Using cached ispy2_expression.csv")
+}
+
+# =============================================================================
+# 4. Three-way gene harmonization
+# =============================================================================
+# Restrict all three expression datasets to genes present on all platforms.
+# Excludes 3 genes: TPSB2 (absent METABRIC + I-SPY2), XCL2 (absent METABRIC),
+# KIR2DL3 (absent I-SPY2). Yields 57/60 Danaher genes.
+# Cytotoxic cells (focal predictor): 10/10 markers on all platforms.
+# =============================================================================
+.log <- c(.log, "", "--- Three-way gene harmonization ---")
+
+expr_files <- c(
+  metabric = file.path(proc_dir, "metabric_expression.csv"),
+  tcga     = file.path(proc_dir, "tcga_expression.csv"),
+  ispy2    = file.path(proc_dir, "ispy2_expression.csv")
+)
+
+expr_list <- lapply(expr_files, read.csv, check.names = FALSE)
+gene_col  <- "hugoGeneSymbol"
+
+common_genes <- Reduce(intersect, lapply(expr_list, function(df) df[[gene_col]]))
+excluded     <- setdiff(danaher_genes, common_genes)
+
+.log <- c(.log, sprintf("  Common genes: %d/%d", length(common_genes),
+                         length(danaher_genes)))
+.log <- c(.log, sprintf("  Excluded: %s", paste(excluded, collapse = ", ")))
+
+for (nm in names(expr_list)) {
+  n_before <- nrow(expr_list[[nm]])
+  expr_list[[nm]] <- expr_list[[nm]][expr_list[[nm]][[gene_col]] %in% common_genes, ]
+  write.csv(expr_list[[nm]], expr_files[[nm]], row.names = FALSE)
+  .log <- c(.log, sprintf("  %s: %d → %d genes", nm, n_before,
+                           nrow(expr_list[[nm]])))
+}
 
 # =============================================================================
 # Verify outputs

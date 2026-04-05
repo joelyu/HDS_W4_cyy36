@@ -4,46 +4,23 @@
 # in the I-SPY2 pembrolizumab arm?
 #
 # Data: GSE194040 (I-SPY2 TRIAL, 988 breast cancer patients)
+#
+# Expects: scores_ispy2 from 01-immune-scoring.R
+#          proc_dir defined by parent qmd
 # =============================================================================
 
 library(dplyr)
 library(GEOquery)
 
-proc_dir <- file.path("data", "processed")
+if (!exists("proc_dir")) proc_dir <- file.path("data", "processed")
 
-# ============================================================
-# 1. Load expression data
-# ============================================================
-message("=== Loading gene-level expression (n=988) ===")
-expr_raw <- read.delim(
-  gzfile("data/raw/GSE194040_ISPY2ResID_AgilentGeneExp_990_FrshFrzn_meanCol_geneLevel_n988.txt.gz"),
-  header = TRUE, row.names = 1, check.names = FALSE
-)
-message(sprintf("Expression matrix: %d genes x %d samples", nrow(expr_raw), ncol(expr_raw)))
-
-# ============================================================
-# 2. Compute Danaher scores
-# ============================================================
-source("scripts/_immune_markers.R")
-
-compute_danaher_score <- function(expr_mat, genes) {
-  avail <- genes[genes %in% rownames(expr_mat)]
-  if (length(avail) == 0) return(rep(NA, ncol(expr_mat)))
-  colMeans(expr_mat[avail, , drop = FALSE], na.rm = TRUE)
+# --- 1. Load pre-computed immune scores (from 01-immune-scoring.R) ------------
+if (!exists("scores_ispy2")) {
+  scores_ispy2 <- read.csv(file.path(proc_dir, "ispy2_immune_scores.csv"))
 }
+message(sprintf("=== I-SPY2 immune scores: %d patients ===", nrow(scores_ispy2)))
 
-scores <- data.frame(patient_id = colnames(expr_raw))
-for (ct in names(immune_markers)) {
-  ct_clean <- gsub("[- ]", "_", ct)
-  scores[[ct_clean]] <- compute_danaher_score(expr_raw, immune_markers[[ct]])
-}
-scores$CD4_T_cells <- scores$T_cells - scores$CD8_T_cells
-
-message(sprintf("Computed Danaher scores for %d samples", nrow(scores)))
-
-# ============================================================
-# 3. Get phenotype data
-# ============================================================
+# --- 2. Get phenotype data from GEO ------------------------------------------
 gse <- getGEO("GSE194040", destdir = "data/raw", GSEMatrix = TRUE)
 pd1 <- pData(gse[[1]])
 pd2 <- pData(gse[[2]])
@@ -57,10 +34,8 @@ pd_all <- bind_rows(pd1, pd2) %>%
   ) %>%
   select(patient_id, arm, pcr, hr, her2)
 
-# ============================================================
-# 4. Merge and filter
-# ============================================================
-merged <- inner_join(scores, pd_all, by = "patient_id")
+# --- 3. Merge and filter ------------------------------------------------------
+merged <- inner_join(scores_ispy2, pd_all, by = "patient_id")
 pembro <- merged %>% filter(grepl("Pembrolizumab", arm, ignore.case = TRUE))
 
 message("\nArm label distribution (sanity check):")
@@ -97,12 +72,14 @@ for (i in seq_len(nrow(results))) {
 }
 
 # ============================================================
-# 6. Adjusted for trial stratification variables (HR + HER2 status)
+# 6. Adjusted for trial stratification variable (HR status)
 # ============================================================
-message("\n=== HR + HER2 adjusted ===")
+# Note: HER2 not included — pembro and control arms are HER2-negative
+# by I-SPY2 trial design (all her2=0), so it cannot vary as a covariate.
+message("\n=== HR-adjusted ===")
 results_adj <- lapply(test_cols, function(ct) {
   pembro$score_z <- scale(pembro[[ct]])[, 1]
-  fit <- glm(pcr ~ score_z + factor(hr) + factor(her2), data = pembro, family = binomial)
+  fit <- glm(pcr ~ score_z + factor(hr), data = pembro, family = binomial)
   s <- summary(fit)
   or <- exp(coef(fit)[2])
   ci <- exp(confint.default(fit)[2, ])
@@ -131,11 +108,11 @@ ci5 <- exp(confint.default(fit5)[2, ])
 message(sprintf("Unadjusted: OR=%.2f [%.2f-%.2f] p=%.4f",
                 or5, ci5[1], ci5[2], s5$coefficients[2, 4]))
 
-fit5a <- glm(pcr ~ scale(top5_mean) + factor(hr) + factor(her2), data = pembro, family = binomial)
+fit5a <- glm(pcr ~ scale(top5_mean) + factor(hr), data = pembro, family = binomial)
 s5a <- summary(fit5a)
 or5a <- exp(coef(fit5a)[2])
 ci5a <- exp(confint.default(fit5a)[2, ])
-message(sprintf("HR+HER2-adjusted: OR=%.2f [%.2f-%.2f] p=%.4f",
+message(sprintf("HR-adjusted: OR=%.2f [%.2f-%.2f] p=%.4f",
                 or5a, ci5a[1], ci5a[2], s5a$coefficients[2, 4]))
 
 # ============================================================
@@ -147,7 +124,7 @@ message(sprintf("Control: %d patients, pCR rate: %.1f%%",
                 nrow(control), 100 * mean(control$pcr)))
 
 control$cyto_z <- scale(control$Cytotoxic_cells)[, 1]
-fc <- glm(pcr ~ cyto_z + factor(hr) + factor(her2), data = control, family = binomial)
+fc <- glm(pcr ~ cyto_z + factor(hr), data = control, family = binomial)
 sc <- summary(fc)
 orc <- exp(coef(fc)[2])
 cic <- exp(confint.default(fc)[2, ])
@@ -155,7 +132,7 @@ message(sprintf("Cytotoxic → pCR (control): OR=%.2f [%.2f-%.2f] p=%.4f",
                 orc, cic[1], cic[2], sc$coefficients[2, 4]))
 
 control$top5_mean <- rowMeans(control[, top5])  # unscaled composite; scale() applied once in model
-fc5 <- glm(pcr ~ scale(top5_mean) + factor(hr) + factor(her2), data = control, family = binomial)
+fc5 <- glm(pcr ~ scale(top5_mean) + factor(hr), data = control, family = binomial)
 sc5 <- summary(fc5)
 orc5 <- exp(coef(fc5)[2])
 cic5 <- exp(confint.default(fc5)[2, ])
@@ -176,13 +153,13 @@ pc <- merged %>%
 # making the interaction coefficient interpretable. Per-arm ORs in sections 5 & 8
 # use arm-specific scaling so those ORs are not directly comparable to these.
 pc$cyto_z <- scale(pc$Cytotoxic_cells)[, 1]
-fi <- glm(pcr ~ cyto_z * factor(is_pembro) + factor(hr) + factor(her2), data = pc, family = binomial)
+fi <- glm(pcr ~ cyto_z * factor(is_pembro) + factor(hr), data = pc, family = binomial)
 si <- summary(fi)
 message("Cytotoxic x Pembrolizumab interaction:")
 print(round(si$coefficients, 4))
 
 pc$top5_z <- scale(rowMeans(pc[, top5]))[, 1]  # single scale() on unscaled composite
-fi5 <- glm(pcr ~ top5_z * factor(is_pembro) + factor(hr) + factor(her2), data = pc, family = binomial)
+fi5 <- glm(pcr ~ top5_z * factor(is_pembro) + factor(hr), data = pc, family = binomial)
 si5 <- summary(fi5)
 message("\nTop-5 x Pembrolizumab interaction:")
 print(round(si5$coefficients, 4))

@@ -1,13 +1,13 @@
 # =============================================================================
 # 01-immune-scoring.R
-# Compute Danaher immune cell scores for METABRIC + TCGA-BRCA
+# Compute Danaher immune cell scores for METABRIC + TCGA-BRCA + I-SPY2
 #
 # Method: mean log2 expression of cell-type-specific marker genes per patient
 # Reference: Danaher P et al. J Immunother Cancer 5, 18 (2017)
 #
 # Input:  data/processed/{cohort}_expression.csv  (from 00-fetch-data.R)
 # Output: data/processed/{cohort}_immune_scores.csv
-#         In memory: scores_both (combined long-format data.frame)
+#         In memory: scores_both (METABRIC+TCGA), scores_all (all three)
 #
 # Expects: proc_dir defined by parent qmd
 # =============================================================================
@@ -79,13 +79,15 @@ score_cohort <- function(expr_file, label) {
   scores_df
 }
 
-# --- Score both cohorts ------------------------------------------------------
+# --- Score all three cohorts ---------------------------------------------------
 scores_metabric <- score_cohort(file.path(proc_dir, "metabric_expression.csv"), "metabric")
 scores_tcga <- score_cohort(file.path(proc_dir, "tcga_expression.csv"), "tcga")
+scores_ispy2 <- score_cohort(file.path(proc_dir, "ispy2_expression.csv"), "ispy2")
 
 # --- Combined long-format for easy comparison --------------------------------
 scores_both <- bind_rows(scores_metabric, scores_tcga)
+scores_all  <- bind_rows(scores_metabric, scores_tcga, scores_ispy2)
 message(sprintf(
-  "\nCombined: %d patients (%d METABRIC, %d TCGA)",
-  nrow(scores_both), nrow(scores_metabric), nrow(scores_tcga)
+  "\nCombined: %d patients (%d METABRIC, %d TCGA, %d I-SPY2)",
+  nrow(scores_all), nrow(scores_metabric), nrow(scores_tcga), nrow(scores_ispy2)
 ))
