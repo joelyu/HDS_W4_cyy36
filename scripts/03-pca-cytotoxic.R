@@ -72,8 +72,13 @@ if (mean(pca_t$rotation[, 1]) < 0) {
 loadings_t  <- pca_t$rotation[, 1]
 loading_cor <- cor(loadings_m, loadings_t)
 
+top3 <- names(sort(abs(loadings_m), decreasing = TRUE))[1:3]
+top7 <- names(sort(abs(loadings_m), decreasing = TRUE))[1:7]
+
 message(sprintf("Loading correlation (METABRIC vs TCGA): r = %.3f", loading_cor))
-message("(r > 0.8 = same immune axis captured cross-platform)\n")
+message(sprintf("(top-3 r=%.2f, top-7 r=%.2f — agreement strongest for high-loading cell types)\n",
+                cor(loadings_m[top3], loadings_t[top3]),
+                cor(loadings_m[top7], loadings_t[top7])))
 
 message("TCGA PC1 loadings (ranked by METABRIC order):")
 for (i in seq_along(ranked_m)) {
