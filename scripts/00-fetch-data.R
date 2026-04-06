@@ -167,11 +167,12 @@ fetch_cohort <- function(
       transmute(
         patient_id      = patientId,
         ajcc_stage      = AJCC_PATHOLOGIC_TUMOR_STAGE,
+        # Order matters: check most specific first to avoid "STAGE I" matching "STAGE II/III"
         tumor_stage_num = case_when(
-          grepl("STAGE I[^V]|STAGE IA|STAGE IB", AJCC_PATHOLOGIC_TUMOR_STAGE) ~ 1L,
-          grepl("STAGE II",  AJCC_PATHOLOGIC_TUMOR_STAGE)                      ~ 2L,
-          grepl("STAGE III", AJCC_PATHOLOGIC_TUMOR_STAGE)                      ~ 3L,
-          grepl("STAGE IV",  AJCC_PATHOLOGIC_TUMOR_STAGE)                      ~ 4L,
+          grepl("^STAGE IV$",        AJCC_PATHOLOGIC_TUMOR_STAGE) ~ 4L,
+          grepl("^STAGE III[ABC]?$", AJCC_PATHOLOGIC_TUMOR_STAGE) ~ 3L,
+          grepl("^STAGE II[AB]?$",   AJCC_PATHOLOGIC_TUMOR_STAGE) ~ 2L,
+          grepl("^STAGE I[AB]?$",    AJCC_PATHOLOGIC_TUMOR_STAGE) ~ 1L,
           TRUE ~ NA_integer_
         ),
         path_t_stage = PATH_T_STAGE,

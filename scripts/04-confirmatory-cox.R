@@ -202,24 +202,30 @@ print(ph_cyto_m)
 
 # --- 5b. Martingale residuals (linearity) ------------------------------------
 # Tests whether continuous predictors (cytotoxic score, age) have a linear
-# relationship with log-hazard. Fitted on surv_m_stg (same sample as f3).
-# Spearman r ≈ 0 with monotone shape → linearity is appropriate.
+# relationship with log-hazard. Null model is fitted WITHOUT cytotoxic so the
+# residuals carry its full unmodelled signal — plotting/correlating residuals
+# against raw cytotoxic score reveals the functional shape it should take.
+# A flat or monotone-linear shape (no curvature) means the linear term is
+# adequate; visual inspection of the loess smoother is the primary check.
 message("\n=== Assumption test 2: Linearity (Martingale residuals) ===")
-message("Null model fitted on surv_m_stg (same analytical sample as f3)\n")
 
-# Null model includes all covariates EXCEPT cyto_z — residuals represent
-# unexplained survival after removing PAM50, age, and stage confounding.
-# Plotting these against raw cytotoxic score tests conditional linearity
-# within the primary model, not marginal association.
+# METABRIC null model (same analytical sample as f3)
 null_m    <- coxph(Surv(os_months, os_event) ~ pam50_subtype + age_z + factor(tumor_stage),
                    data = surv_m_stg)
-mart_resid <- residuals(null_m, type = "martingale")
+mart_resid_m <- residuals(null_m, type = "martingale")
+cor_cyto_m <- cor(mart_resid_m, surv_m_stg$Cytotoxic_cells, method = "spearman")
+cor_age_m  <- cor(mart_resid_m, surv_m_stg$age_at_diagnosis, method = "spearman")
+message(sprintf("METABRIC Spearman(Martingale, Cytotoxic): r = %.3f", cor_cyto_m))
+message(sprintf("METABRIC Spearman(Martingale, Age):       r = %.3f", cor_age_m))
 
-cor_cyto <- cor(mart_resid, surv_m_stg$Cytotoxic_cells, method = "spearman")
-cor_age  <- cor(mart_resid, surv_m_stg$age_at_diagnosis, method = "spearman")
-message(sprintf("Spearman(Martingale, Cytotoxic score): r = %.3f", cor_cyto))
-message(sprintf("Spearman(Martingale, Age):             r = %.3f", cor_age))
-message("Interpretation: |r| < 0.3 with monotone shape → linear assumption appropriate")
+# TCGA null model (same analytical sample as g3)
+null_t    <- coxph(Surv(os_months, os_event) ~ pam50_subtype + age_z + factor(tumor_stage_num),
+                   data = surv_t_stg)
+mart_resid_t <- residuals(null_t, type = "martingale")
+cor_cyto_t <- cor(mart_resid_t, surv_t_stg$Cytotoxic_cells, method = "spearman")
+cor_age_t  <- cor(mart_resid_t, surv_t_stg$age_at_diagnosis, method = "spearman")
+message(sprintf("TCGA Spearman(Martingale, Cytotoxic):     r = %.3f", cor_cyto_t))
+message(sprintf("TCGA Spearman(Martingale, Age):           r = %.3f", cor_age_t))
 
 # =============================================================================
 # 6. Save outputs
@@ -267,6 +273,15 @@ ph_df_t$term <- rownames(ph_df_t)
 ph_df_t$cohort <- "TCGA"
 write.csv(ph_df_t, file.path(proc_dir, "schoenfeld_test_tcga.csv"), row.names = FALSE)
 
+# Martingale test results — both cohorts
+martingale_df <- data.frame(
+  cohort     = c("METABRIC", "METABRIC", "TCGA", "TCGA"),
+  predictor  = c("Cytotoxic", "Age", "Cytotoxic", "Age"),
+  spearman_r = c(cor_cyto_m, cor_age_m, cor_cyto_t, cor_age_t),
+  n          = c(nrow(surv_m_stg), nrow(surv_m_stg), nrow(surv_t_stg), nrow(surv_t_stg))
+)
+write.csv(martingale_df, file.path(proc_dir, "martingale_test.csv"), row.names = FALSE)
+
 # Clean up temporary columns written directly onto surv_m / surv_t
 # (surv_m$age_z and surv_m$npi_z are NOT written — only on subsets — so not cleaned here)
 surv_m$cyto_z <- NULL
@@ -276,3 +291,4 @@ message("\n=== 04-confirmatory-cox.R complete ===")
 message(sprintf("Outputs: %s/cox_robustness_confounders.csv", proc_dir))
 message(sprintf("         %s/schoenfeld_test_metabric.csv", proc_dir))
 message(sprintf("         %s/schoenfeld_test_tcga.csv", proc_dir))
+message(sprintf("         %s/martingale_test.csv", proc_dir))
