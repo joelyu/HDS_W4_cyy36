@@ -24,7 +24,15 @@ dependencies:
   - r-rcolorbrewer
   - r-viridislite
   - r-scales
+  - r-svglite  # required by ggsave() for SVG output
+  # System bindings required by Bioconductor's rtracklayer chain.
+  # Without these pre-installed, cBioPortalData fails to build via BiocManager
+  # due to cascading XML/restfulr/rtracklayer/GenomicFeatures dependency errors.
+  - r-xml
+  - r-restfulr
   # Bioconductor — bioconda dependency chains can break on osx-arm64.
-  # If `mamba env create` fails on cBioPortalData / GEOquery, install from R after env creation:
+  # After `mamba env create`, install Bioconductor packages from R:
   #   Rscript -e 'if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager"); BiocManager::install(c("cBioPortalData", "GEOquery"))'
+  # If cBioPortalData still fails, pre-install XML/restfulr from CRAN first:
+  #   Rscript -e 'install.packages(c("XML", "restfulr"), repos = "https://cloud.r-project.org")'
   - r-biocmanager

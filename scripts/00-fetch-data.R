@@ -43,7 +43,23 @@ for (pkg in c("cBioPortalData", "GEOquery", "dplyr", "tidyr", "tibble")) {
   }
 }
 
-cbio <- cBioPortal()
+# Skip cBioPortal API initialisation if all cached files already exist —
+# avoids hard failure when the cBioPortal service is down (HTTP 503).
+required_files <- c(
+  file.path(proc_dir, "metabric_clinical.csv"),
+  file.path(proc_dir, "metabric_clinical_extended.csv"),
+  file.path(proc_dir, "metabric_expression.csv"),
+  file.path(proc_dir, "tcga_clinical.csv"),
+  file.path(proc_dir, "tcga_clinical_extended.csv"),
+  file.path(proc_dir, "tcga_expression.csv")
+)
+
+if (all(file.exists(required_files))) {
+  .log <- c(.log, "All cBioPortal cache files present — skipping API init")
+  cbio <- NULL
+} else {
+  cbio <- cBioPortal()
+}
 
 # =============================================================================
 # Helper: fetch clinical + expression for a study
@@ -274,35 +290,43 @@ fetch_cohort <- function(
 # =============================================================================
 # First, discover available mRNA profiles for TCGA-BRCA
 tcga_study <- "brca_tcga_pan_can_atlas_2018"
-tcga_profiles <- molecularProfiles(cbio, studyId = tcga_study)
-mrna_profiles <- tcga_profiles %>%
-  as.data.frame() %>%
-  filter(grepl("mrna|rna", molecularProfileId, ignore.case = TRUE))
 
-.log <- c(
-  .log,
-  "",
-  sprintf("[tcga] Available mRNA profiles for %s:", tcga_study),
-  sprintf("  %s (%s)", mrna_profiles$molecularProfileId, mrna_profiles$name)
-)
+# Skip the molecular profile discovery API call if cache files already exist
+# (cbio is NULL when all required files were already on disk)
+if (!is.null(cbio)) {
+  tcga_profiles <- molecularProfiles(cbio, studyId = tcga_study)
+  mrna_profiles <- tcga_profiles %>%
+    as.data.frame() %>%
+    filter(grepl("mrna|rna", molecularProfileId, ignore.case = TRUE))
 
-# Use the base RNA-seq profile (not z-scores) for Danaher scoring
-tcga_mrna_id <- mrna_profiles$molecularProfileId[
-  grepl("rna_seq.*mrna$", mrna_profiles$molecularProfileId) |
-    grepl("rna_seq_v2_mrna$", mrna_profiles$molecularProfileId)
-]
-if (length(tcga_mrna_id) == 0) {
-  # Fallback: take first non-zscore profile
+  .log <- c(
+    .log,
+    "",
+    sprintf("[tcga] Available mRNA profiles for %s:", tcga_study),
+    sprintf("  %s (%s)", mrna_profiles$molecularProfileId, mrna_profiles$name)
+  )
+
+  # Use the base RNA-seq profile (not z-scores) for Danaher scoring
   tcga_mrna_id <- mrna_profiles$molecularProfileId[
-    !grepl(
-      "z_scores|zscores",
-      mrna_profiles$molecularProfileId,
-      ignore.case = TRUE
-    )
-  ][1]
+    grepl("rna_seq.*mrna$", mrna_profiles$molecularProfileId) |
+      grepl("rna_seq_v2_mrna$", mrna_profiles$molecularProfileId)
+  ]
+  if (length(tcga_mrna_id) == 0) {
+    # Fallback: take first non-zscore profile
+    tcga_mrna_id <- mrna_profiles$molecularProfileId[
+      !grepl(
+        "z_scores|zscores",
+        mrna_profiles$molecularProfileId,
+        ignore.case = TRUE
+      )
+    ][1]
+  }
+  tcga_mrna_id <- tcga_mrna_id[1] # take first match
+  .log <- c(.log, sprintf("[tcga] Selected profile: %s", tcga_mrna_id))
+} else {
+  # All cached — use the known profile id
+  tcga_mrna_id <- "brca_tcga_pan_can_atlas_2018_rna_seq_v2_mrna"
 }
-tcga_mrna_id <- tcga_mrna_id[1] # take first match
-.log <- c(.log, sprintf("[tcga] Selected profile: %s", tcga_mrna_id))
 
 .log <- c(
   .log,
