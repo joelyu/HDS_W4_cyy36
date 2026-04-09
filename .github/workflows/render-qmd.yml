@@ -1,0 +1,62 @@
+name: Render QMD to HTML and Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'HDS_04_YuChungYan_2604.qmd'
+      - 'scripts/**'
+      - 'references.bib'
+      - 'nature.csl'
+      - 'data/**'
+      - 'environment.yml'
+      - '.github/workflows/render-qmd.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Mamba
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          environment-file: environment.yml
+          activate-environment: cytotoxcore
+          use-mamba: true
+
+      - name: Install Bioconductor packages
+        run: |
+          Rscript -e 'options(repos = c(CRAN = "https://cloud.r-project.org")); if (!require("BiocManager")) install.packages("BiocManager"); BiocManager::install(c("cBioPortalData", "GEOquery"), ask = FALSE, update = FALSE)'
+
+      - name: Render QMD to HTML
+        run: quarto render HDS_04_YuChungYan_2604.qmd
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+        with:
+          enablement: true
+
+      - name: Upload to GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
