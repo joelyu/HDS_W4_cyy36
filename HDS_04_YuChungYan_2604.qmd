@@ -91,7 +91,7 @@ For each of the questions, do not spend too long answering – keep it brief. Fo
 |How have you used or changed the generative AI's output| My collated notes always stay in point form so that I write out the paragraphs in my own words. Feedback provided by the GenAI models are weighed and assessed before being acted on. |
 
 
-> The GitHub repository of this project is found [here](https://github.com/joelyu/HDS-W4.git).
+> The GitHub repository of this project is found [here](https://github.com/joelyu/HDS-W4.git). The poster PDF is found [here](https://joelyu.github.io/HDS-W4/poster/poster.pdf)
 
 # Design rationale
 
